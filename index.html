@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://appsforoffice.microsoft.com https://officeapis.public.onecdn.static.microsoft; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; media-src 'none'; form-action 'none'; base-uri 'none';">
+  <title>Local Interactive Plot</title>
+  <link rel="stylesheet" href="assets/app.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script defer src="assets/parser.js"></script>
+  <script defer src="assets/renderer.js"></script>
+  <script defer src="assets/app.js"></script>
+</head>
+<body>
+  <main id="app" aria-live="polite">
+    <div id="toolbar" class="toolbar">
+      <label class="fileButton" for="fileInput">Abrir HTML Plotly</label>
+      <input id="fileInput" type="file" accept=".html,.htm,text/html" hidden>
+      <button id="zoomBtn" type="button" class="tool active" title="Arraste um retângulo para ampliar">Zoom</button>
+      <button id="panBtn" type="button" class="tool" title="Arraste para mover">Pan</button>
+      <button id="resetBtn" type="button" class="tool" title="Restaurar limites">Reset</button>
+      <button id="clearBtn" type="button" class="tool subtle" title="Remover gráfico salvo deste objeto">Limpar</button>
+      <span id="status" class="status">Inicializando…</span>
+    </div>
+
+    <section id="emptyState" class="emptyState">
+      <div class="emptyCard">
+        <strong>Gráfico interativo local</strong>
+        <span>Escolha um HTML Plotly do seu computador. O arquivo é lido localmente e o JavaScript dele não é executado.</span>
+      </div>
+    </section>
+
+    <section id="plotShell" class="plotShell hidden">
+      <canvas id="plotCanvas"></canvas>
+      <div id="zoomBox" class="zoomBox hidden"></div>
+      <div id="tooltip" class="tooltip hidden"></div>
+      <div id="legend" class="legend"></div>
+    </section>
+  </main>
+</body>
+</html>
