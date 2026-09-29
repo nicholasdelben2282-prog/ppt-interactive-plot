@@ -3,6 +3,7 @@
 
   const MAX_FILE_BYTES = 25 * 1024 * 1024;
   const MAX_TRACES = 32;
+  const MAX_PANELS = 8;
   const MAX_POINTS_PER_TRACE = 250000;
   const MAX_TOTAL_POINTS = 500000;
   const MAX_TEXT = 300;
@@ -124,6 +125,21 @@
     return null;
   }
 
+  function panelFromTrace(trace) {
+    let p = null;
+    if (trace.meta && typeof trace.meta === 'object' && !Array.isArray(trace.meta)) {
+      const raw = trace.meta.pptPanel;
+      if (Number.isInteger(raw)) p = raw;
+    }
+    if (p == null && typeof trace.yaxis === 'string') {
+      const m = /^y(\d+)?$/i.exec(trace.yaxis.trim());
+      if (m) p = m[1] ? Number(m[1]) : 1;
+    }
+    if (p == null) p = 1;
+    if (!Number.isInteger(p) || p < 1 || p > MAX_PANELS) fail(`Número de subplot inválido: ${p}`);
+    return p - 1;
+  }
+
   function sanitizeTrace(trace, idx) {
     if (!trace || typeof trace !== 'object' || Array.isArray(trace)) fail(`Trace ${idx + 1} inválida.`);
     const type = trace.type == null ? 'scatter' : String(trace.type).toLowerCase();
@@ -147,6 +163,7 @@
 
     return {
       name: plainText(trace.name, `Trace ${idx + 1}`),
+      panel: panelFromTrace(trace),
       x,
       y,
       lines: hasLines,
@@ -175,6 +192,32 @@
     return (typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b) && a !== b) ? [a, b] : null;
   }
 
+  function axisObject(layout, prefix, p) {
+    const key = p === 0 ? `${prefix}axis` : `${prefix}axis${p + 1}`;
+    const obj = layout[key];
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+  }
+
+  function panelMetadata(layout) {
+    const meta = layout && layout.meta && typeof layout.meta === 'object' && !Array.isArray(layout.meta) ? layout.meta : {};
+    const arr = Array.isArray(meta.pptPanels) ? meta.pptPanels : [];
+    if (arr.length > MAX_PANELS) fail(`Máximo de ${MAX_PANELS} subplots.`);
+    return arr;
+  }
+
+  function sanitizePanel(layout, metaEntry, p) {
+    metaEntry = metaEntry && typeof metaEntry === 'object' && !Array.isArray(metaEntry) ? metaEntry : {};
+    const xa = axisObject(layout, 'x', p);
+    const ya = axisObject(layout, 'y', p);
+    return {
+      title: plainText(metaEntry.title, ''),
+      xTitle: plainText(metaEntry.xTitle, axisTitle(xa, 'x')),
+      yTitle: plainText(metaEntry.yTitle, axisTitle(ya, 'y')),
+      xRange: axisRange(xa),
+      yRange: axisRange(ya)
+    };
+  }
+
   function sanitizeModel(data, layout) {
     if (!Array.isArray(data) || data.length === 0) fail('O gráfico não contém traces.');
     if (data.length > MAX_TRACES) fail(`Máximo de ${MAX_TRACES} traces por gráfico.`);
@@ -183,16 +226,16 @@
     if (total > MAX_TOTAL_POINTS) fail(`O gráfico excede ${MAX_TOTAL_POINTS.toLocaleString('pt-BR')} pontos no total.`);
 
     layout = layout && typeof layout === 'object' && !Array.isArray(layout) ? layout : {};
+    const metas = panelMetadata(layout);
+    const maxTracePanel = traces.reduce((m, t) => Math.max(m, t.panel), 0);
+    const panelCount = Math.max(1, maxTracePanel + 1, metas.length);
+    if (panelCount > MAX_PANELS) fail(`Máximo de ${MAX_PANELS} subplots.`);
+
+    const panels = [];
+    for (let p = 0; p < panelCount; p++) panels.push(sanitizePanel(layout, metas[p], p));
+
     const title = typeof layout.title === 'string' ? plainText(layout.title) : plainText(layout.title && layout.title.text);
-    return {
-      schema: 1,
-      title,
-      xTitle: axisTitle(layout.xaxis, 'x'),
-      yTitle: axisTitle(layout.yaxis, 'y'),
-      xRange: axisRange(layout.xaxis),
-      yRange: axisRange(layout.yaxis),
-      traces
-    };
+    return { schema: 2, title, panels, traces };
   }
 
   function parsePlotlyHtml(html) {
@@ -208,21 +251,48 @@
     return sanitizeModel(data, layout);
   }
 
-  function validateSavedModel(model) {
-    if (!model || model.schema !== 1 || !Array.isArray(model.traces)) fail('Modelo salvo incompatível.');
-    assertNoDangerousKeys(model);
-    // Re-sanitize from the already-safe subset.
-    const layout = {
-      title: model.title,
-      xaxis: { title: model.xTitle, range: model.xRange },
-      yaxis: { title: model.yTitle, range: model.yRange }
+  function modelV1ToV2(model) {
+    return {
+      schema: 2,
+      title: plainText(model.title, ''),
+      panels: [{
+        title: '',
+        xTitle: plainText(model.xTitle, 'x'),
+        yTitle: plainText(model.yTitle, 'y'),
+        xRange: Array.isArray(model.xRange) ? model.xRange : null,
+        yRange: Array.isArray(model.yRange) ? model.yRange : null
+      }],
+      traces: (model.traces || []).map(t => Object.assign({}, t, { panel: 0 }))
     };
+  }
+
+  function validateSavedModel(model) {
+    if (!model || typeof model !== 'object') fail('Modelo salvo incompatível.');
+    assertNoDangerousKeys(model);
+    if (model.schema === 1) model = modelV1ToV2(model);
+    if (model.schema !== 2 || !Array.isArray(model.traces) || !Array.isArray(model.panels)) fail('Modelo salvo incompatível.');
+    if (model.panels.length < 1 || model.panels.length > MAX_PANELS) fail('Quantidade de subplots salva inválida.');
+
     const data = model.traces.map(t => ({
       type: 'scatter', name: t.name, x: t.x, y: t.y,
       mode: `${t.lines ? 'lines' : ''}${t.lines && t.markers ? '+' : ''}${t.markers ? 'markers' : ''}`,
       line: { color: t.color, width: t.width, dash: t.dash },
-      marker: { color: t.color, size: t.markerSize }, visible: t.visible
+      marker: { color: t.color, size: t.markerSize }, visible: t.visible,
+      meta: { pptPanel: Number.isInteger(t.panel) ? t.panel + 1 : 1 }
     }));
+
+    const metaPanels = model.panels.map(p => ({
+      title: p && p.title,
+      xTitle: p && p.xTitle,
+      yTitle: p && p.yTitle
+    }));
+    const layout = { title: model.title, meta: { pptPanels: metaPanels } };
+    model.panels.forEach((p, i) => {
+      const xk = i === 0 ? 'xaxis' : `xaxis${i + 1}`;
+      const yk = i === 0 ? 'yaxis' : `yaxis${i + 1}`;
+      layout[xk] = { title: p && p.xTitle, range: p && p.xRange };
+      layout[yk] = { title: p && p.yTitle, range: p && p.yRange };
+    });
     return sanitizeModel(data, layout);
   }
 

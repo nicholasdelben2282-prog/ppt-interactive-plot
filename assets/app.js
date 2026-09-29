@@ -4,12 +4,38 @@
   const MAX_PERSIST_BYTES = 8 * 1024 * 1024;
   let renderer;
   let officeReady = false;
+  let activeViewHandlerRegistered = false;
 
   const $ = id => document.getElementById(id);
   function setStatus(text, kind='') { const el=$('status'); el.textContent=text; el.dataset.kind=kind; }
   function showPlot(show){ $('plotShell').classList.toggle('hidden',!show); $('emptyState').classList.toggle('hidden',show); }
-
   function utf8Bytes(obj) { return new TextEncoder().encode(JSON.stringify(obj)).byteLength; }
+
+  function applyActiveView(view) {
+    const isRead = String(view || '').toLowerCase() === 'read';
+    document.body.classList.toggle('presentMode', isRead);
+    if (renderer) requestAnimationFrame(() => renderer.resize());
+  }
+
+  function queryActiveView() {
+    if (!officeReady || !Office.context || !Office.context.document || typeof Office.context.document.getActiveViewAsync !== 'function') return;
+    try {
+      Office.context.document.getActiveViewAsync(result => {
+        if (result.status === Office.AsyncResultStatus.Succeeded) applyActiveView(result.value);
+      });
+    } catch (_) {}
+  }
+
+  function registerActiveViewChanged() {
+    if (activeViewHandlerRegistered || !officeReady || !Office.context || !Office.context.document || typeof Office.context.document.addHandlerAsync !== 'function') return;
+    try {
+      Office.context.document.addHandlerAsync(Office.EventType.ActiveViewChanged, eventArgs => {
+        applyActiveView(eventArgs && eventArgs.activeView);
+      }, result => {
+        if (result.status === Office.AsyncResultStatus.Succeeded) activeViewHandlerRegistered = true;
+      });
+    } catch (_) {}
+  }
 
   function persistModel(model) {
     if (!officeReady || !window.Office || !Office.context || !Office.context.document) {
@@ -65,7 +91,7 @@
   }
 
   function bindUi(){
-    renderer = new window.PlotRenderer($('plotCanvas'),$('tooltip'),$('legend'),$('zoomBox'));
+    renderer = new window.PlotRenderer($('plotSvg'),$('tooltip'),$('legend'),$('zoomBox'));
     $('fileInput').addEventListener('change',e=>openFile(e.target.files && e.target.files[0]));
     $('zoomBtn').addEventListener('click',()=>{renderer.setMode('zoom');$('zoomBtn').classList.add('active');$('panBtn').classList.remove('active');});
     $('panBtn').addEventListener('click',()=>{renderer.setMode('pan');$('panBtn').classList.add('active');$('zoomBtn').classList.remove('active');});
@@ -77,7 +103,12 @@
     bindUi(); showPlot(false);
     if (window.Office && typeof Office.onReady === 'function') {
       let settled=false;
-      Office.onReady().then(()=>{settled=true;officeReady=true;if(!restoreModel())setStatus('Pronto. Escolha um HTML Plotly local.');}).catch(()=>{});
+      Office.onReady().then(()=>{
+        settled=true;officeReady=true;
+        queryActiveView();
+        registerActiveViewChanged();
+        if(!restoreModel())setStatus('Pronto. Escolha um HTML Plotly local.');
+      }).catch(()=>{});
       setTimeout(()=>{if(!settled)setStatus('Modo de pré-visualização no navegador. No PowerPoint, os dados podem ser persistidos no arquivo.', 'warn');},2500);
     } else setStatus('Modo de pré-visualização no navegador.', 'warn');
   });
